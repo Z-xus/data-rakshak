@@ -66,3 +66,50 @@ line-ending = "auto"
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.poetry]
+name = "data-rakshak"
+version = "0.1.0"
+description = "Indian Data Rakshak - a Presidio based indian redaction system"
+authors = ["Spam Me <spammenauf@gmail.com>"]
+packages = [
+    { include = "presidio_image_redactor", from = "presidio-image-redactor" },
+    { include = "presidio_analyzer", from = "presidio-analyzer" },
+    { include = "presidio_anonymizer", from = "presidio-anonymizer" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+flask = ">=1.1"
+
+# Presidio Analyzer dependencies
+spacy = ">=3.4.4, <4.0.0"
+regex = "*"
+tldextract = "*"
+pyyaml = "*"
+phonenumbers = ">=8.12,<9.0.0"
+
+# Presidio Anonymizer dependencies
+pycryptodome = ">=3.10.1"
+
+# Presidio Image Redactor dependencies
+pillow = ">=9.0"
+pytesseract = ">=0.3.7,<0.4"
+matplotlib = ">=3.6"
+pydicom = ">=2.3.0"
+pypng = ">=0.20220715.0"
+azure-ai-formrecognizer = ">=3.3.0,<4.0.0"
+opencv-python-headless = ">=4.0.0,<5.0.0"
+python-gdcm = ">=3.0.24.1"
+
+[tool.poetry.group.dev.dependencies]
+pip = "*"
+ruff = "*"
+pytest = "*"
+pytest-mock = "*"
+python-dotenv = "*"
+pre_commit = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
