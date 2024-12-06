@@ -6,10 +6,14 @@ import os
 from logging.config import fileConfig
 from pathlib import Path
 from typing import Tuple
+import numpy as np
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_file
 from presidio_analyzer import AnalyzerEngine, AnalyzerEngineProvider, AnalyzerRequest
 from werkzeug.exceptions import HTTPException
+
+from werkzeug.utils import secure_filename
+from pdf_redactor import PresidioPDFRedactor
 
 DEFAULT_PORT = "3000"
 
@@ -46,6 +50,7 @@ class Server:
             nlp_engine_conf_file=nlp_engine_conf_file,
             recognizer_registry_conf_file=recognizer_registry_conf_file,
         ).create_engine()
+        self.pdf_redactor = PresidioPDFRedactor(analyzer_engine=self.engine)
         self.logger.info(WELCOME_MESSAGE)
 
         @self.app.route("/health")
@@ -58,6 +63,8 @@ class Server:
             """Execute the analyzer function."""
             # Parse the request params
             try:
+                # TODO: ADD MORE RECOGNIZERS
+                print(request.get_json())
                 req_data = AnalyzerRequest(request.get_json())
                 if not req_data.text:
                     raise Exception("No text provided")
@@ -76,13 +83,28 @@ class Server:
                     context=req_data.context,
                     allow_list=req_data.allow_list,
                     allow_list_match=req_data.allow_list_match,
-                    regex_flags=req_data.regex_flags
+                    regex_flags=req_data.regex_flags,
                 )
+
+                self.logger.info(f"Hello {type(recognizer_result_list)} results.")
+                self.logger.info(f"Hi {recognizer_result_list} results.")
+
+                def custom_serializer(obj):
+                    if isinstance(obj, (np.float32, np.float64)):
+                        return float(obj)
+
+                    if hasattr(obj, "to_dict"):
+                        return obj.to_dict()
+
+                    raise TypeError(
+                        f"Object of type {type(obj)} is not JSON serializable"
+                    )
 
                 return Response(
                     json.dumps(
                         recognizer_result_list,
-                        default=lambda o: o.to_dict(),
+                        # default=lambda o: o.to_dict(),
+                        default=custom_serializer,
                         sort_keys=True,
                     ),
                     content_type="application/json",
@@ -130,6 +152,69 @@ class Server:
                     f"AnalyzerEngine.supported_entities(). {e}"
                 )
                 return jsonify(error=e.args[0]), 500
+
+        @self.app.route("/redact-pdf", methods=["POST"])
+        def redact_pdf():
+            """
+            Endpoint to analyze and redact PDF files
+            """
+            try:
+                # Validate request
+                if "file" not in request.files:
+                    raise Exception("No file provided")
+
+                file = request.files["file"]
+                if file.filename == "":
+                    raise Exception("No file selected")
+
+                # Get parameters
+                language = request.form.get("language", "en")
+                additional_keywords = request.form.getlist("additional_keywords")
+                custom_regex = request.form.getlist("custom_regex")
+
+                # Create temporary directories if they don't exist
+                os.makedirs("temp/input", exist_ok=True)
+                os.makedirs("temp/output", exist_ok=True)
+
+                # Save input file
+                input_filename = secure_filename(file.filename)
+                input_path = os.path.join("temp/input", input_filename)
+                file.save(input_path)
+
+                # Create output path
+                output_filename = f"redacted_{input_filename}"
+                output_path = os.path.join("temp/output", output_filename)
+
+                # Process the PDF
+                result = self.pdf_redactor.redact_pdf(
+                    pdf_path=input_path,
+                    output_path=output_path,
+                    language=language,
+                    additional_keywords=additional_keywords,
+                    custom_regex=custom_regex,
+                )
+
+                # Return the redacted PDF file
+                return send_file(
+                    output_path,
+                    as_attachment=True,
+                    download_name=output_filename,
+                    mimetype="application/pdf",
+                )
+
+            except Exception as e:
+                self.logger.error(f"Error redacting PDF: {e}")
+                return jsonify(error=str(e)), 500
+
+            finally:
+                # Cleanup temporary files
+                try:
+                    if "input_path" in locals():
+                        os.remove(input_path)
+                    if "output_path" in locals():
+                        os.remove(output_path)
+                except Exception as e:
+                    self.logger.warning(f"Error cleaning up temporary files: {e}")
 
         @self.app.errorhandler(HTTPException)
         def http_exception(e):

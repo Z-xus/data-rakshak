@@ -36,6 +36,10 @@ azure-ai-textanalytics = { version = "*", optional = true }
 azure-core = { version = "*", optional = true }
 transformers = { version = "*", optional = true }
 huggingface_hub = { version = "*", optional = true }
+pymupdf = "^1.25.0"
+typing-extensions = ">=4.0.0"
+pillow = "^11.0.0"
+opencv-python = "^4.10.0.84"
 
 [tool.poetry.extras]
 server = ["flask"]
