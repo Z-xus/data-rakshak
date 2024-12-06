@@ -65,7 +65,14 @@ class TransformersNlpEngine(SpacyNlpEngine):
                         "spacy": "en_core_web_sm",
                         "transformers": "obi/deid_roberta_i2b2",
                     },
-                }
+                },
+                {
+                    "lang_code": "hi",
+                    "model_name": {
+                        "spacy": "xx_ent_wiki_sm",
+                        "transformers": "mirfan899/bert-hindi-ner",
+                    },
+                },
             ]
         super().__init__(models=models, ner_model_configuration=ner_model_configuration)
         self.entity_key = "bert-base-ner"

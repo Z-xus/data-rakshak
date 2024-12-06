@@ -4,6 +4,24 @@ models:
     lang_code: en
     model_name: en_core_web_lg
 
+# nlp_engine_name: stanza
+# models:
+#   -
+#     lang_code: en
+#     model_name: en
+#   -
+#     lang_code: hi
+#     model_name: hi
+
+# nlp_engine_name: transformers
+# models:
+#   -
+#     lang_code: hi
+#     model_name:
+#       spacy: xx_ent_wiki_sm
+#       transformers: mirfan899/hindi-bert-ner
+
+
 ner_model_configuration:
   model_to_presidio_entity_mapping:
     PER: PERSON
@@ -22,6 +40,7 @@ ner_model_configuration:
   low_score_entity_names:
   -
   labels_to_ignore:
+  - O
   - ORGANIZATION # Has many false positives
   - CARDINAL
   - EVENT
