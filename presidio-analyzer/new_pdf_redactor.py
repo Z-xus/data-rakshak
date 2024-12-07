@@ -4,111 +4,131 @@ import fitz
 from PIL import Image
 import cv2
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Generator
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-import os
 import multiprocessing
 
 
 class PresidioPDFRedactor:
     def __init__(self, analyzer_engine: AnalyzerEngine = None):
-        """
-        PDF Redactor that uses Presidio analysis results
-        """
+        """PDF Redactor with secure redaction and batch processing"""
         self.analyzer = analyzer_engine or AnalyzerEngine()
         self.logger = logging.getLogger("presidio-pdf-redactor")
-        self.CHUNK_SIZE = 900000  # Just under spaCy's 1M limit
-        self.entity_cache = {}
+        self.batch_size = 10  # Pages per batch
+        self.max_workers = min(32, multiprocessing.cpu_count() * 2)
 
-    def extract_entities_from_analysis(self, analyzer_results, text: str) -> List[str]:
-        """Extract actual text strings from analyzer results"""
-        entities = []
-        for result in analyzer_results:
-            entity_text = text[result.start : result.end]
-            entities.append(entity_text)
-        return list(set(entities))  # Remove duplicates
+    def process_page_batch(self, batch_data: tuple) -> List[Dict]:
+        """Process a batch of pages"""
+        pages, entities, patterns = batch_data
+        results = []
 
-    def analyze_text_chunk(self, text: str, language: str) -> List[str]:
-        """Analyze a chunk of text and return unique entities"""
-        try:
-            analyzer_results = self.analyzer.analyze(text=text, language=language)
-            return self.extract_entities_from_analysis(analyzer_results, text)
-        except Exception as e:
-            self.logger.error(f"Error analyzing chunk: {e}")
-            return []
+        for page_num, page_text in pages:
+            try:
+                # Analyze text with Presidio
+                analyzer_results = self.analyzer.analyze(text=page_text, language="en")
 
-    def analyze_document(self, doc: fitz.Document, language: str) -> List[str]:
-        """Analyze document in chunks to manage memory"""
-        all_entities = set()
-        full_text = ""
-        chunk_texts = []
-        
-        # Collect text and split into chunks
-        for page in doc:
-            text = page.get_text()
-            full_text += text
-            
-            while len(full_text) >= self.CHUNK_SIZE:
-                # Find last period or newline to split naturally
-                split_pos = full_text.rfind('.', 0, self.CHUNK_SIZE)
-                if split_pos == -1:
-                    split_pos = full_text.rfind('\n', 0, self.CHUNK_SIZE)
-                if split_pos == -1:
-                    split_pos = self.CHUNK_SIZE
-                
-                chunk_texts.append(full_text[:split_pos])
-                full_text = full_text[split_pos:]
-        
-        if full_text:
-            chunk_texts.append(full_text)
+                # Get redaction areas
+                redaction_areas = []
 
-        # Process chunks in parallel
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(self.analyze_text_chunk, chunk, language)
-                for chunk in chunk_texts
-            ]
-            
-            with tqdm(total=len(chunk_texts), desc="Analyzing text chunks") as pbar:
-                for future in as_completed(futures):
-                    entities = future.result()
-                    all_entities.update(entities)
-                    pbar.update(1)
-
-        return list(all_entities)
-
-    def process_page(self, args: tuple) -> Dict:
-        """Process a single page in parallel"""
-        page_num, page_text, entities_to_redact = args
-        try:
-            matches = []
-            # Process entities in smaller batches to avoid regex memory issues
-            BATCH_SIZE = 100
-            for i in range(0, len(entities_to_redact), BATCH_SIZE):
-                batch = entities_to_redact[i:i + BATCH_SIZE]
-                for entity in batch:
-                    matches.extend(
-                        [(m.start(), m.end()) 
-                         for m in re.finditer(re.escape(entity), page_text)]
+                # From analyzer results
+                for result in analyzer_results:
+                    text = page_text[result.start : result.end]
+                    redaction_areas.extend(
+                        self.get_redaction_areas(page_num, text, page_text)
                     )
-            return {"page_num": page_num, "matches": matches}
-        except Exception as e:
-            self.logger.error(f"Error processing page {page_num}: {e}")
-            return {"page_num": page_num, "matches": []}
 
-    def preprocess_image(self, pil_image):
-        """Preprocess image for better OCR"""
-        opencv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(
-            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
-        )
-        return Image.fromarray(cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB))
+                # From provided entities
+                for entity in entities:
+                    redaction_areas.extend(
+                        self.get_redaction_areas(page_num, entity, page_text)
+                    )
+
+                # From regex patterns
+                for pattern in patterns:
+                    matches = re.finditer(pattern, page_text)
+                    for match in matches:
+                        text = page_text[match.start() : match.end()]
+                        redaction_areas.extend(
+                            self.get_redaction_areas(page_num, text, page_text)
+                        )
+
+                results.append(
+                    {"page_num": page_num, "redaction_areas": redaction_areas}
+                )
+
+            except Exception as e:
+                self.logger.error(f"Error processing page {page_num}: {e}")
+                results.append({"page_num": page_num, "redaction_areas": []})
+
+        return results
+
+    def get_redaction_areas(
+        self, page_num: int, text: str, page_text: str
+    ) -> List[Dict]:
+        """Get precise redaction areas with context"""
+        areas = []
+        try:
+            for match in re.finditer(re.escape(text), page_text):
+                start_pos = match.start()
+                end_pos = match.end()
+
+                # Get surrounding context
+                context_before = page_text[max(0, start_pos - 50) : start_pos]
+                context_after = page_text[end_pos : min(end_pos + 50, len(page_text))]
+
+                areas.append(
+                    {
+                        "text": text,
+                        "start": start_pos,
+                        "end": end_pos,
+                        "context_before": context_before,
+                        "context_after": context_after,
+                    }
+                )
+
+        except Exception as e:
+            self.logger.error(
+                f"Error getting redaction areas for '{text}' on page {page_num}: {e}"
+            )
+
+        return areas
+
+    def apply_secure_redaction(self, page: fitz.Page, area: Dict) -> None:
+        """Apply secure redaction that prevents text selection"""
+        try:
+            # Get text instances with context
+            text_to_find = area["text"]
+            instances = page.search_for(text_to_find)
+
+            for inst in instances:
+                # Create slightly larger rectangle for complete coverage
+                rect = fitz.Rect(inst)
+                rect.x0 -= 1
+                rect.y0 -= 1
+                rect.x1 += 1
+                rect.y1 += 1
+
+                # First remove the text content
+                page.add_redact_annot(rect)
+                page.apply_redactions()
+
+                # Then cover with black rectangle
+                page.draw_rect(rect, color=(0, 0, 0), fill=(0, 0, 0), overlay=True)
+
+                # Add an invisible text layer to prevent selection
+                page.insert_text(
+                    rect.tl,  # top-left point
+                    " " * len(text_to_find),  # spaces instead of original text
+                    fontsize=0.1,
+                    color=(0, 0, 0),
+                )
+
+        except Exception as e:
+            self.logger.error(f"Error applying secure redaction: {e}")
 
     def redact_pdf(
         self,
@@ -118,75 +138,66 @@ class PresidioPDFRedactor:
         additional_keywords: List[str] = None,
         custom_regex: List[str] = None,
     ) -> Dict[str, Any]:
-        """Main redaction method with proper error handling"""
+        """Main redaction method with batch processing"""
         try:
             doc = fitz.open(pdf_path)
             total_pages = len(doc)
 
-            # Get file size for logging
-            file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
-            self.logger.info(f"Processing PDF ({file_size_mb:.2f}MB)")
+            # Prepare batches
+            all_pages = []
+            with tqdm(total=total_pages, desc="Preparing pages") as pbar:
+                for page_num in range(total_pages):
+                    page_text = doc[page_num].get_text()
+                    all_pages.append((page_num, page_text))
+                    pbar.update(1)
 
-            # Analyze document
-            detected_entities = self.analyze_document(doc, language)
-
-            # Combine with additional keywords
-            all_entities = set(detected_entities)
-            if additional_keywords:
-                all_entities.update(additional_keywords)
-
-            # Add custom regex patterns
-            if custom_regex:
-                for pattern in custom_regex:
-                    for page in doc:
-                        text = page.get_text()
-                        matches = re.finditer(pattern, text)
-                        for match in matches:
-                            all_entities.add(text[match.start() : match.end()])
-
-            # Process pages in parallel
-            cpu_count = multiprocessing.cpu_count()
-            page_texts = [
-                (i, doc[i].get_text(), list(all_entities)) for i in range(total_pages)
+            # Create batches
+            batches = [
+                all_pages[i : i + self.batch_size]
+                for i in range(0, len(all_pages), self.batch_size)
             ]
 
+            # Process batches in parallel
             results = []
-            with tqdm(total=total_pages, desc="Processing pages") as pbar:
-                with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+            patterns = custom_regex or [r"\b[A-Z]{2}\d{6}\b"]
+            keywords = additional_keywords or []
+
+            with tqdm(total=len(batches), desc="Processing batches") as pbar:
+                with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                     futures = [
-                        executor.submit(self.process_page, args) for args in page_texts
+                        executor.submit(
+                            self.process_page_batch, (batch, keywords, patterns)
+                        )
+                        for batch in batches
                     ]
 
                     for future in as_completed(futures):
-                        results.append(future.result())
+                        results.extend(future.result())
                         pbar.update(1)
 
-            # Apply redactions
+            # Apply secure redactions
             with tqdm(total=len(results), desc="Applying redactions") as pbar:
                 for result in results:
-                    page_num = result["page_num"]
-                    page = doc[page_num]
-
-                    for start, end in result["matches"]:
-                        text = page.get_text()
-                        text_instances = page.search_for(text[start:end])
-                        for inst in text_instances:
-                            page.draw_rect(inst, color=(0, 0, 0), fill=(0, 0, 0))
-
+                    page = doc[result["page_num"]]
+                    for area in result["redaction_areas"]:
+                        self.apply_secure_redaction(page, area)
                     pbar.update(1)
 
-            # Save redacted document
-            doc.save(output_path)
+            # Save document
+            doc.save(
+                output_path,
+                garbage=4,  # Maximum cleanup
+                deflate=True,  # Compress content
+                clean=True,  # Remove unused elements
+            )
             doc.close()
 
             return {
                 "status": "success",
-                "file_size_mb": file_size_mb,
                 "pages_processed": total_pages,
-                "entities_detected": list(all_entities),
                 "output_path": output_path,
             }
 
         except Exception as e:
             self.logger.error(f"Error during redaction: {e}")
-            raise e
+            raise
