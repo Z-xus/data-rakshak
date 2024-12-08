@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from logging.config import fileConfig
 from pathlib import Path
 from typing import Tuple
@@ -13,7 +14,11 @@ from presidio_analyzer import AnalyzerEngine, AnalyzerEngineProvider, AnalyzerRe
 from werkzeug.exceptions import HTTPException
 
 from werkzeug.utils import secure_filename
-from pdf_redactor import PresidioPDFRedactor
+
+from new_pdf_redactor import PresidioPDFRedactor
+
+# from adv_pdf_redactor import AdvancedPDFRedactor
+from image_redactor import PresidioImageRedactor
 
 DEFAULT_PORT = "3000"
 
@@ -51,7 +56,10 @@ class Server:
             recognizer_registry_conf_file=recognizer_registry_conf_file,
         ).create_engine()
         self.pdf_redactor = PresidioPDFRedactor(analyzer_engine=self.engine)
+        # self.pdf_redactor = AdvancedPDFRedactor()
         self.logger.info(WELCOME_MESSAGE)
+
+        self.image_redactor = PresidioImageRedactor()
 
         @self.app.route("/health")
         def health() -> str:
@@ -155,24 +163,163 @@ class Server:
 
         @self.app.route("/redact-pdf", methods=["POST"])
         def redact_pdf():
-            """
-            Endpoint to analyze and redact PDF files
-            """
             try:
-                # Validate request
                 if "file" not in request.files:
-                    raise Exception("No file provided")
+                    return jsonify({"error": "No file provided"}), 400
 
                 file = request.files["file"]
                 if file.filename == "":
-                    raise Exception("No file selected")
+                    return jsonify({"error": "No file selected"}), 400
 
                 # Get parameters
                 language = request.form.get("language", "en")
+                
+                # Parse and validate entities
+                try:
+                    entities = json.loads(request.form.get("entities", "[]"))
+                    if not isinstance(entities, list):
+                        return jsonify({"error": "Entities must be a list"}), 400
+                except json.JSONDecodeError:
+                    return jsonify({"error": "Invalid entities JSON"}), 400
+
                 additional_keywords = request.form.getlist("additional_keywords")
                 custom_regex = request.form.getlist("custom_regex")
 
-                # Create temporary directories if they don't exist
+                # Create unique filenames
+                timestamp = int(time.time())
+                input_filename = secure_filename(file.filename)
+                input_path = os.path.join("temp/input", f"{timestamp}_{input_filename}")
+                output_filename = f"redacted_{timestamp}_{input_filename}"
+                output_path = os.path.join("temp/output", output_filename)
+
+                # Save uploaded file
+                file.save(input_path)
+
+                try:
+                    # Process the PDF
+                    result = self.pdf_redactor.redact_pdf(
+                        pdf_path=input_path,
+                        output_path=output_path,
+                        language=language,
+                        additional_keywords=additional_keywords,
+                        custom_regex=custom_regex,
+                        entities=entities
+                    )
+
+                    self.logger.info(f"Redaction completed: {result}")
+
+                    # Return the redacted PDF
+                    return send_file(
+                        output_path,
+                        as_attachment=True,
+                        download_name=output_filename,
+                        mimetype="application/pdf",
+                    )
+
+                finally:
+                    # Cleanup temporary files
+                    try:
+                        if os.path.exists(input_path):
+                            os.remove(input_path)
+                        if os.path.exists(output_path):
+                            # Only remove after sending file
+                            pass
+                    except Exception as e:
+                        self.logger.warning(f"Error cleaning up temporary files: {e}")
+
+            except Exception as e:
+                self.logger.error(f"Error processing PDF: {e}")
+                return (
+                    jsonify({"error": str(e), "message": "Failed to process PDF"}),
+                    500,
+                )
+
+        # def redact_pdf():
+        #     """
+        #     Endpoint to analyze and redact PDF files
+        #     """
+        #     try:
+        #         # Validate request
+        #         if "file" not in request.files:
+        #             raise Exception("No file provided")
+        #
+        #         file = request.files["file"]
+        #         if file.filename == "":
+        #             raise Exception("No file selected")
+        #
+        #         # Get parameters
+        #         language = request.form.get("language", "en")
+        #         additional_keywords = request.form.getlist("additional_keywords")
+        #         custom_regex = request.form.getlist("custom_regex")
+        #
+        #         # Create temporary directories if they don't exist
+        #         os.makedirs("temp/input", exist_ok=True)
+        #         os.makedirs("temp/output", exist_ok=True)
+        #
+        #         # Save input file
+        #         input_filename = secure_filename(file.filename)
+        #         input_path = os.path.join("temp/input", input_filename)
+        #         file.save(input_path)
+        #
+        #         # Create output path
+        #         output_filename = f"redacted_{input_filename}"
+        #         output_path = os.path.join("temp/output", output_filename)
+        #
+        #         # Process the PDF
+        #         result = self.pdf_redactor.redact_pdf(
+        #             pdf_path=input_path,
+        #             output_path=output_path,
+        #             language=language,
+        #             additional_keywords=additional_keywords,
+        #             custom_regex=custom_regex,
+        #         )
+        #
+        #         # Return the redacted PDF file
+        #         return send_file(
+        #             output_path,
+        #             as_attachment=True,
+        #             download_name=output_filename,
+        #             mimetype="application/pdf",
+        #         )
+        #
+        #     except Exception as e:
+        #         self.logger.error(f"Error redacting PDF: {e}")
+        #         return jsonify(error=str(e)), 500
+        #
+        #     finally:
+        #         # Cleanup temporary files
+        #         try:
+        #             if "input_path" in locals():
+        #                 os.remove(input_path)
+        #             if "output_path" in locals():
+        #                 os.remove(output_path)
+        #         except Exception as e:
+        #             self.logger.warning(f"Error cleaning up temporary files: {e}")
+
+        @self.app.route("/redact-image", methods=["POST"])
+        def redact_image():
+            """Endpoint to analyze and redact images"""
+            try:
+                if "file" not in request.files:
+                    return jsonify({"error": "No file provided"}), 400
+
+                file = request.files["file"]
+                if file.filename == "":
+                    return jsonify({"error": "No file selected"}), 400
+
+                # Validate file type
+                allowed_extensions = {"png", "jpg", "jpeg", "tiff", "bmp"}
+                if not file.filename.lower().endswith(tuple(allowed_extensions)):
+                    return jsonify({"error": "Invalid file type"}), 400
+
+                # Parse parameters
+                language = request.form.get("language", "en")
+                additional_keywords = json.loads(
+                    request.form.get("additional_keywords", "[]")
+                )
+                custom_regex = json.loads(request.form.get("custom_regex", "[]"))
+
+                # Create temporary directories
                 os.makedirs("temp/input", exist_ok=True)
                 os.makedirs("temp/output", exist_ok=True)
 
@@ -185,26 +332,25 @@ class Server:
                 output_filename = f"redacted_{input_filename}"
                 output_path = os.path.join("temp/output", output_filename)
 
-                # Process the PDF
-                result = self.pdf_redactor.redact_pdf(
-                    pdf_path=input_path,
-                    output_path=output_path,
+                # Process the image
+                result = self.image_redactor.redact_image(
+                    input_image=input_path,
+                    output_image=output_path,
                     language=language,
                     additional_keywords=additional_keywords,
                     custom_regex=custom_regex,
                 )
 
-                # Return the redacted PDF file
+                # Return the redacted image
                 return send_file(
                     output_path,
                     as_attachment=True,
                     download_name=output_filename,
-                    mimetype="application/pdf",
+                    mimetype=f"image/{output_filename.split('.')[-1].lower()}",
                 )
 
             except Exception as e:
-                self.logger.error(f"Error redacting PDF: {e}")
-                return jsonify(error=str(e)), 500
+                return jsonify({"error": str(e)}), 500
 
             finally:
                 # Cleanup temporary files
@@ -214,7 +360,7 @@ class Server:
                     if "output_path" in locals():
                         os.remove(output_path)
                 except Exception as e:
-                    self.logger.warning(f"Error cleaning up temporary files: {e}")
+                    print(f"Error cleaning up temporary files: {e}")
 
         @self.app.errorhandler(HTTPException)
         def http_exception(e):
