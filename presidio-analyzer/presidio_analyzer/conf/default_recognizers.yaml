@@ -174,4 +174,4 @@ recognizers:
   - name: PasswordRecognizer
     supported_languages:
     - language: en
-    type: custom
+    type: predefined
