@@ -173,7 +173,7 @@ class Server:
 
                 # Get parameters
                 language = request.form.get("language", "en")
-                
+
                 # Parse and validate entities
                 try:
                     entities = json.loads(request.form.get("entities", "[]"))
@@ -203,7 +203,7 @@ class Server:
                         language=language,
                         additional_keywords=additional_keywords,
                         custom_regex=custom_regex,
-                        entities=entities
+                        entities=entities,
                     )
 
                     self.logger.info(f"Redaction completed: {result}")
@@ -298,7 +298,6 @@ class Server:
 
         @self.app.route("/redact-image", methods=["POST"])
         def redact_image():
-            """Endpoint to analyze and redact images"""
             try:
                 if "file" not in request.files:
                     return jsonify({"error": "No file provided"}), 400
@@ -308,59 +307,66 @@ class Server:
                     return jsonify({"error": "No file selected"}), 400
 
                 # Validate file type
-                allowed_extensions = {"png", "jpg", "jpeg", "tiff", "bmp"}
+                allowed_extensions = {"png", "jpg", "jpeg"}
                 if not file.filename.lower().endswith(tuple(allowed_extensions)):
                     return jsonify({"error": "Invalid file type"}), 400
 
-                # Parse parameters
+                # Get parameters
                 language = request.form.get("language", "en")
-                additional_keywords = json.loads(
-                    request.form.get("additional_keywords", "[]")
-                )
-                custom_regex = json.loads(request.form.get("custom_regex", "[]"))
+                
+                # Parse and validate entities
+                try:
+                    entities = json.loads(request.form.get("entities", "[]"))
+                    if not isinstance(entities, list):
+                        return jsonify({"error": "Entities must be a list"}), 400
+                except json.JSONDecodeError:
+                    return jsonify({"error": "Invalid entities JSON"}), 400
 
-                # Create temporary directories
-                os.makedirs("temp/input", exist_ok=True)
-                os.makedirs("temp/output", exist_ok=True)
-
-                # Save input file
+                # Create unique filenames
+                timestamp = int(time.time())
                 input_filename = secure_filename(file.filename)
-                input_path = os.path.join("temp/input", input_filename)
-                file.save(input_path)
-
-                # Create output path
-                output_filename = f"redacted_{input_filename}"
+                input_path = os.path.join("temp/input", f"{timestamp}_{input_filename}")
+                output_filename = f"redacted_{timestamp}_{input_filename}"
                 output_path = os.path.join("temp/output", output_filename)
 
-                # Process the image
-                result = self.image_redactor.redact_image(
-                    input_image=input_path,
-                    output_image=output_path,
-                    language=language,
-                    additional_keywords=additional_keywords,
-                    custom_regex=custom_regex,
-                )
+                # Ensure directories exist
+                os.makedirs(os.path.dirname(input_path), exist_ok=True)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-                # Return the redacted image
-                return send_file(
-                    output_path,
-                    as_attachment=True,
-                    download_name=output_filename,
-                    mimetype=f"image/{output_filename.split('.')[-1].lower()}",
-                )
+                # Save uploaded file
+                file.save(input_path)
+
+                try:
+                    # Process the image
+                    result = self.image_redactor.redact_image(
+                        image_path=input_path,
+                        output_path=output_path,
+                        language=language,
+                        entities=entities
+                    )
+
+                    # Return the redacted image
+                    return send_file(
+                        output_path,
+                        as_attachment=True,
+                        download_name=output_filename,
+                        mimetype=f"image/{output_filename.split('.')[-1].lower()}"
+                    )
+
+                finally:
+                    # Cleanup temporary files
+                    try:
+                        if os.path.exists(input_path):
+                            os.remove(input_path)
+                        if os.path.exists(output_path):
+                            # Only remove after sending file
+                            pass
+                    except Exception as e:
+                        self.logger.warning(f"Error cleaning up temporary files: {e}")
 
             except Exception as e:
-                return jsonify({"error": str(e)}), 500
-
-            finally:
-                # Cleanup temporary files
-                try:
-                    if "input_path" in locals():
-                        os.remove(input_path)
-                    if "output_path" in locals():
-                        os.remove(output_path)
-                except Exception as e:
-                    print(f"Error cleaning up temporary files: {e}")
+                self.logger.error(f"Error processing image: {e}")
+                return jsonify({"error": str(e), "message": "Failed to process image"}), 500
 
         @self.app.errorhandler(HTTPException)
         def http_exception(e):
