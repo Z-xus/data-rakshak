@@ -53,36 +53,36 @@ recognizers:
     supported_languages: 
     - en
     type: predefined
-
-  - name: UkNinoRecognizer
-    supported_languages:
-    - en
-    type: predefined
-
-  - name: SgFinRecognizer
-    supported_languages: 
-    - en
-    type: predefined
-
-  - name: AuAbnRecognizer
-    supported_languages: 
-    - en
-    type: predefined
-
-  - name: AuAcnRecognizer
-    supported_languages: 
-    - en
-    type: predefined
-
-  - name: AuTfnRecognizer
-    supported_languages: 
-    - en
-    type: predefined
-
-  - name: AuMedicareRecognizer
-    supported_languages: 
-    - en
-    type: predefined
+  #
+  # - name: UkNinoRecognizer
+  #   supported_languages:
+  #   - en
+  #   type: predefined
+  #
+  # - name: SgFinRecognizer
+  #   supported_languages: 
+  #   - en
+  #   type: predefined
+  #
+  # - name: AuAbnRecognizer
+  #   supported_languages: 
+  #   - en
+  #   type: predefined
+  #
+  # - name: AuAcnRecognizer
+  #   supported_languages: 
+  #   - en
+  #   type: predefined
+  #
+  # - name: AuTfnRecognizer
+  #   supported_languages: 
+  #   - en
+  #   type: predefined
+  #
+  # - name: AuMedicareRecognizer
+  #   supported_languages: 
+  #   - en
+  #   type: predefined
 
   - name: InPanRecognizer
     supported_languages: 
@@ -103,47 +103,47 @@ recognizers:
     supported_languages: 
     - en
     type: predefined
-
-  - name: EsNifRecognizer
-    supported_languages: 
-    - es
-    type: predefined
-
-  - name: EsNieRecognizer
-    supported_languages: 
-    - es
-    type: predefined
-
-  - name: ItDriverLicenseRecognizer
-    supported_languages: 
-    - it
-    type: predefined
-
-  - name: ItFiscalCodeRecognizer
-    supported_languages: 
-    - it
-    type: predefined
-
-  - name: ItVatCodeRecognizer
-    supported_languages: 
-    - it
-    type: predefined
-
-  - name: ItIdentityCardRecognizer
-    supported_languages: 
-    - it
-    type: predefined
-
-  - name: ItPassportRecognizer
-    supported_languages: 
-    - it
-    type: predefined
-
-  - name: PlPeselRecognizer
-    supported_languages: 
-    - pl
-    type: predefined
-
+  #
+  # - name: EsNifRecognizer
+  #   supported_languages: 
+  #   - es
+  #   type: predefined
+  #
+  # - name: EsNieRecognizer
+  #   supported_languages: 
+  #   - es
+  #   type: predefined
+  #
+  # - name: ItDriverLicenseRecognizer
+  #   supported_languages: 
+  #   - it
+  #   type: predefined
+  #
+  # - name: ItFiscalCodeRecognizer
+  #   supported_languages: 
+  #   - it
+  #   type: predefined
+  #
+  # - name: ItVatCodeRecognizer
+  #   supported_languages: 
+  #   - it
+  #   type: predefined
+  #
+  # - name: ItIdentityCardRecognizer
+  #   supported_languages: 
+  #   - it
+  #   type: predefined
+  #
+  # - name: ItPassportRecognizer
+  #   supported_languages: 
+  #   - it
+  #   type: predefined
+  #
+  # - name: PlPeselRecognizer
+  #   supported_languages: 
+  #   - pl
+  #   type: predefined
+  #
   - name: CryptoRecognizer
     type: predefined
 
@@ -174,4 +174,4 @@ recognizers:
   - name: PasswordRecognizer
     supported_languages:
     - language: en
-    type: predefined
+    type: custom
