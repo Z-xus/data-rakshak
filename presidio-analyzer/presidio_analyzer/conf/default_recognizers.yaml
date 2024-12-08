@@ -170,3 +170,8 @@ recognizers:
 
   - name: InVoterRecognizer
     type: predefined
+
+  - name: PasswordRecognizer
+    supported_languages:
+    - language: en
+    type: predefined

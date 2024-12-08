@@ -90,7 +90,7 @@ ner_model_configuration:
   - BRAND
   - TERMS
   - TITLE_OBJECT
-  # - ORGANIZATION # Has many false positives
+  - ORGANIZATION # Has many false positives
   - CARDINAL
   - EVENT
   - LANGUAGE
