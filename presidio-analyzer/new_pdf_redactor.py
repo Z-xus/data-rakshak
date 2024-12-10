@@ -12,7 +12,7 @@ from presidio_analyzer import AnalyzerEngine
 class PresidioPDFRedactor:
     def __init__(self, analyzer_engine: AnalyzerEngine = None):
         """
-        PDF Redactor that uses Presidio analysis results with multiprocessing optimization
+        PDF Redactor that uses Presidio analysis results with comprehensive redaction
         """
         self.analyzer = analyzer_engine or AnalyzerEngine()
 
@@ -33,28 +33,12 @@ class PresidioPDFRedactor:
                 entities.append(entity_text)
         return list(set(entities))  # Remove duplicates
 
-    def process_page(self, page_data):
+    def find_text_instances(self, page, text):
         """
-        Process a single page for redaction with enhanced performance
+        Find all text instances on a page and return their rectangles
         """
-        page_text, page_num, redaction_config = page_data
-        matches = []
-        try:
-            # Process keywords
-            for keyword in redaction_config["keywords"]:
-                for match in re.finditer(re.escape(keyword), page_text):
-                    matches.append((match.start(), match.end()))
-
-            # Process regex patterns
-            for pattern in redaction_config["regex_patterns"]:
-                for match in re.finditer(pattern, page_text):
-                    matches.append((match.start(), match.end()))
-
-            return page_num, matches
-
-        except Exception as e:
-            print(f"Error processing page {page_num}: {e}")
-            return page_num, []
+        instances = page.search_for(text)
+        return instances
 
     def redact_pdf(
         self,
@@ -66,9 +50,9 @@ class PresidioPDFRedactor:
         entities: List[str] = None,
     ) -> Dict[str, Any]:
         """
-        Analyze and redact PDF using Presidio analysis with multiprocessing
+        Analyze and redact PDF using Presidio analysis with comprehensive redaction
         """
-        # Open document
+        # Open document in update mode
         doc = fitz.open(pdf_path)
         detected_entities = set()
 
@@ -103,33 +87,35 @@ class PresidioPDFRedactor:
         if custom_regex:
             redaction_config["regex_patterns"].extend(custom_regex)
 
-        # Multiprocessing Redaction
-        num_cores = max(1, multiprocessing.cpu_count() - 1)
-        processed_pages = []
+        # Perform Redaction
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            page_text = page.get_text()
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
-            # Prepare page processing tasks with text instead of page objects
-            page_tasks = [
-                (doc[page_num].get_text(), page_num, redaction_config)
-                for page_num in range(len(doc))
-            ]
+            # Redact keywords and regex patterns
+            redact_targets = (
+                redaction_config["keywords"] + 
+                [re.findall(pattern, page_text)[0] for pattern in redaction_config["regex_patterns"] if re.findall(pattern, page_text)]
+            )
 
-            # Submit tasks and collect results
-            futures = {
-                executor.submit(self.process_page, task): task[1] for task in page_tasks
-            }
+            for target in redact_targets:
+                try:
+                    # Find all instances of the text
+                    instances = self.find_text_instances(page, target)
+                    
+                    # Use both redaction methods for comprehensive coverage
+                    for rect in instances:
+                        # Add redaction annotation
+                        page.add_redact_annot(rect)
+                        
+                        # Draw a black rectangle to ensure complete coverage
+                        page.draw_rect(rect, color=(0, 0, 0), fill=(0, 0, 0))
+                except Exception as e:
+                    print(f"Error redacting '{target}': {e}")
+            page.apply_redactions()
 
-            for future in concurrent.futures.as_completed(futures):
-                page_num, matches = future.result()
-                if matches:
-                    # Apply redactions to the original document
-                    page = doc[page_num]
-                    for start, end in matches:
-                        text = page.get_text()[start:end]
-                        instances = page.search_for(text)
-                        for inst in instances:
-                            page.draw_rect(inst, color=(0, 0, 0), fill=(0, 0, 0))
-                    processed_pages.append(page_num)
+        # Apply redactions
+        # doc.apply_redactions()
 
         # Save the redacted document
         doc.save(output_path)
