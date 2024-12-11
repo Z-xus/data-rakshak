@@ -91,6 +91,7 @@ ner_model_configuration:
   - TERMS
   - TITLE_OBJECT
   - ORGANIZATION # Has many false positives
+  - VENDOR
   - CARDINAL
   - EVENT
   - LANGUAGE

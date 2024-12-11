@@ -66,6 +66,62 @@ class Server:
             """Return basic health probe result."""
             return "Presidio Analyzer service is up"
 
+        # # New route to extract PII entities with their text
+        #
+        # @self.app.route("/pii-entities", methods=["POST"])
+        # def get_pii_entities() -> Tuple[str, int]:
+        #     """Extract PII entities with their text snippets."""
+        #     try:
+        #         req_data = AnalyzerRequest(request.get_json())
+        #         if not req_data.text:
+        #             raise Exception("No text provided")
+        #         if not req_data.language:
+        #             raise Exception("No language provided")
+        #
+        #         # Perform analysis
+        #         recognizer_result_list = self.engine.analyze(
+        #             text=req_data.text,
+        #             language=req_data.language,
+        #             # Use same parameters as analyze method
+        #             correlation_id=req_data.correlation_id,
+        #             score_threshold=req_data.score_threshold,
+        #             entities=req_data.entities,
+        #             return_decision_process=req_data.return_decision_process,
+        #             ad_hoc_recognizers=req_data.ad_hoc_recognizers,
+        #             context=req_data.context,
+        #             allow_list=req_data.allow_list,
+        #             allow_list_match=req_data.allow_list_match,
+        #             regex_flags=req_data.regex_flags,
+        #         )
+        #
+        #         pii_entities = [
+        #             {
+        #                 "entity_type": entity.entity_type,
+        #                 "text_snippet": req_data.text[entity.start : entity.end],
+        #                 "score": entity.score,
+        #             }
+        #             for entity in recognizer_result_list
+        #             if entity.entity_type
+        #             in ["PERSON", "LOCATION", "PHONE_NUMBER", "ID"]
+        #         ]
+        #
+        #         return Response(
+        #             json.dumps(
+        #                 pii_entities,
+        #                 sort_keys=True,
+        #             ),
+        #             content_type="application/json",
+        #         )
+        #     except TypeError as te:
+        #         error_msg = f"Failed to parse /pii-entities request. {te.args[0]}"
+        #         self.logger.error(error_msg)
+        #         return jsonify(error=error_msg), 400
+        #     except Exception as e:
+        #         self.logger.error(
+        #             f"A fatal error occurred during PII entity extraction. {e}"
+        #         )
+        #         return jsonify(error=e.args[0]), 500
+        #
         @self.app.route("/analyze", methods=["POST"])
         def analyze() -> Tuple[str, int]:
             """Execute the analyzer function."""
@@ -108,9 +164,18 @@ class Server:
                         f"Object of type {type(obj)} is not JSON serializable"
                     )
 
+                pii_entities = [
+                    {
+                        "entity_type": entity.entity_type,
+                        "text_snippet": req_data.text[entity.start : entity.end],
+                        "score": entity.score,
+                    }
+                    for entity in recognizer_result_list
+                ]
+
                 return Response(
                     json.dumps(
-                        recognizer_result_list,
+                        pii_entities,
                         # default=lambda o: o.to_dict(),
                         default=custom_serializer,
                         sort_keys=True,
@@ -313,7 +378,7 @@ class Server:
 
                 # Get parameters
                 language = request.form.get("language", "en")
-                
+
                 # Parse and validate entities
                 try:
                     entities = json.loads(request.form.get("entities", "[]"))
@@ -342,7 +407,7 @@ class Server:
                         image_path=input_path,
                         output_path=output_path,
                         language=language,
-                        entities=entities
+                        entities=entities,
                     )
 
                     # Return the redacted image
@@ -350,7 +415,7 @@ class Server:
                         output_path,
                         as_attachment=True,
                         download_name=output_filename,
-                        mimetype=f"image/{output_filename.split('.')[-1].lower()}"
+                        mimetype=f"image/{output_filename.split('.')[-1].lower()}",
                     )
 
                 finally:
@@ -366,7 +431,10 @@ class Server:
 
             except Exception as e:
                 self.logger.error(f"Error processing image: {e}")
-                return jsonify({"error": str(e), "message": "Failed to process image"}), 500
+                return (
+                    jsonify({"error": str(e), "message": "Failed to process image"}),
+                    500,
+                )
 
         @self.app.errorhandler(HTTPException)
         def http_exception(e):
