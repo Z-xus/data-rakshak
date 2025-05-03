@@ -2,6 +2,7 @@
 
 import json
 import logging
+import datetime
 import os
 import time
 from logging.config import fileConfig
@@ -46,9 +47,7 @@ class Server:
         self.logger.setLevel(os.environ.get("LOG_LEVEL", self.logger.level))
         self.app = Flask(__name__)
         CORS(self.app)
-        CORS(self.app, resources={
-            "/verify": {"origins": "*", "methods": ["GET"]}
-        })
+        CORS(self.app, resources={"/verify": {"origins": "*", "methods": ["GET"]}})
 
         analyzer_conf_file = os.environ.get("ANALYZER_CONF_FILE")
         nlp_engine_conf_file = os.environ.get("NLP_CONF_FILE")
@@ -606,7 +605,10 @@ class Server:
                     if not isinstance(strings_to_redact, list):
                         return jsonify({"error": "Strings must be a list"}), 400
                     if not strings_to_redact:
-                        return jsonify({"error": "No strings provided for redaction"}), 400
+                        return (
+                            jsonify({"error": "No strings provided for redaction"}),
+                            400,
+                        )
                 except json.JSONDecodeError:
                     return jsonify({"error": "Invalid strings JSON"}), 400
 
@@ -683,7 +685,9 @@ class Server:
                 timestamp = int(time.time())
                 input_filename = secure_filename(file.filename)
                 input_path = os.path.join("temp/input", f"{timestamp}_{input_filename}")
-                output_path = os.path.join("temp/output", f"drm_{timestamp}_{input_filename}")
+                output_path = os.path.join(
+                    "temp/output", f"drm_{timestamp}_{input_filename}"
+                )
 
                 os.makedirs(os.path.dirname(input_path), exist_ok=True)
                 file.save(input_path)
@@ -693,14 +697,14 @@ class Server:
                     input_path=input_path,
                     output_path=output_path,
                     owner_id=owner_id,
-                    expiry_date=expiry_datetime
+                    expiry_date=expiry_datetime,
                 )
 
                 return send_file(
-                    result['output_path'],
+                    result["output_path"],
                     as_attachment=True,
                     download_name=f"drm_{input_filename}",
-                    mimetype="application/drmpdf"
+                    mimetype="application/pdf",
                 )
 
             except Exception as e:
@@ -731,24 +735,24 @@ class Server:
 
                 # Get metadata from storage
                 metadata = self.drm_manager._get_metadata(doc_id)
-                
+
                 if not metadata:
                     return jsonify({"error": "Document not found"}), 404
-                    
+
                 # Check if access is revoked
-                if metadata['status'] != 'active':
+                if metadata["status"] != "active":
                     return jsonify({"error": "Access revoked"}), 403
-                    
+
                 # Check expiry if set
-                if metadata.get('expiry_date'):
-                    expiry = datetime.fromisoformat(metadata['expiry_date'])
+                if metadata.get("expiry_date"):
+                    expiry = datetime.fromisoformat(metadata["expiry_date"])
                     if datetime.now() > expiry:
                         return jsonify({"error": "Document expired"}), 403
-                
+
                 return jsonify({"status": "active"}), 200
 
             except Exception as e:
-                logger.error(f"Error verifying PDF access: {str(e)}")
+                print(f"Error verifying PDF access: {str(e)}")
                 return jsonify({"error": str(e)}), 500
 
         @self.app.errorhandler(HTTPException)

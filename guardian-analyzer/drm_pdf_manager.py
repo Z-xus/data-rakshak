@@ -24,55 +24,75 @@ class DRMPDFManager:
         owner_id: str,
         expiry_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
-        """Create a DRM-protected PDF"""
+        """Create a stealthy DRM-protected PDF that looks like a normal PDF"""
         try:
-            # Generate unique document ID
             doc_id = str(uuid.uuid4())
             
-            # Create JavaScript action for the PDF
+            # Create a more subtle verification script
             verify_script = f"""
             try {{
-                var xhr = new XMLHttpRequest();
-                xhr.open('GET', '{self.api_url}/verify?doc_id={doc_id}', false);
-                xhr.send(null);
+                function checkAccess() {{
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('GET', '{self.api_url}/verify?doc_id={doc_id}', false);
+                    xhr.send(null);
+                    
+                    if (xhr.status !== 200) {{
+                        // Gradually fade out content
+                        var pages = this.numPages;
+                        for (var i = 0; i < pages; i++) {{
+                            this.setPageContent(i, "");  // Clear page content
+                        }}
+                        this.dirty = true;
+                        this.reload();
+                    }}
+                }}
                 
-                if (xhr.status !== 200) {{
-                    app.alert('Access to this document has been revoked.');
-                    this.closeDoc(true);
+                // Check periodically without showing alerts
+                setInterval(checkAccess, 30000);  // Every 30 seconds
+                
+                // Also check when document gains focus
+                this.setFocus = function() {{
+                    checkAccess();
+                    this._setFocus.apply(this, arguments);
                 }}
             }} catch (e) {{
-                app.alert('Unable to verify document access. Please check your internet connection.');
+                // Fail silently to avoid detection
+                console.log(e);
             }}
             """
             
             # Open and modify the PDF
             doc = fitz.open(input_path)
             
-            # Add JavaScript to be executed when document opens
-            doc.js_onCreate = verify_script
+            # Add hidden metadata for tracking
+            doc.set_metadata({
+                "format": "PDF-1.7",  # Standard PDF format
+                "encryption": None,    # Hide encryption info
+                "javascript": verify_script,
+                "drm_id": doc_id      # Hidden DRM ID
+            })
             
-            # Add JavaScript to be executed periodically
-            doc.js_onIdle = verify_script
-            
-            # Encrypt the document with standard protection
+            # Save with minimal visible security
             doc.save(
                 output_path,
                 encryption=fitz.PDF_ENCRYPT_AES_256,
-                owner_pw=self.key.decode(),  # Owner password
-                user_pw="",                  # Empty user password for automatic checks
-                permissions=fitz.PDF_PERM_ACCESSIBILITY  # Minimal permissions
+                owner_pw=self.key.decode(),
+                user_pw="",  # No visible password protection
+                permissions=fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT | fitz.PDF_PERM_COPY,
+                garbage=4,   # Maximum cleanup
+                deflate=True # Compress to hide modifications
             )
             
-            # Store DRM metadata in our system
+            # Store DRM metadata separately
             drm_metadata = {
                 'doc_id': doc_id,
                 'owner_id': owner_id,
                 'creation_date': datetime.now().isoformat(),
                 'expiry_date': expiry_date.isoformat() if expiry_date else None,
-                'status': 'active'
+                'status': 'active',
+                'original_hash': self._calculate_hash(input_path)
             }
             
-            # Save metadata to database or file system
             self._store_metadata(doc_id, drm_metadata)
             
             return {
@@ -82,7 +102,7 @@ class DRMPDFManager:
             }
             
         except Exception as e:
-            logger.error(f"Error creating DRM PDF: {str(e)}")
+            logger.error(f"Error creating stealth DRM PDF: {str(e)}")
             raise
 
     def revoke_access(self, doc_id: str, owner_id: str) -> Dict[str, Any]:
@@ -135,3 +155,9 @@ class DRMPDFManager:
         except Exception as e:
             logger.error(f"Error opening DRM PDF: {str(e)}")
             raise 
+
+    def _calculate_hash(self, file_path: str) -> str:
+        """Calculate file hash for integrity checking"""
+        import hashlib
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
